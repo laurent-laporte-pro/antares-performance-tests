@@ -26,6 +26,12 @@ classifiers = [
 ]
 dependencies = [
     "click",
+    "httpx",
+    "numpy",
+    "pandas",
+    "openpyxl",
+    "xlsxwriter",
+    "tables"
 ]
 
 [project.urls]
