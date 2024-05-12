@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "antares-performance-tests"
+dynamic = ["version"]
+description = 'Utilities for Antares Web performance tests'
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+    { name = "Laurent LAPORTE", email = "laurent.laporte.pro@gmail.com" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+    "click",
+]
+
+[project.urls]
+Documentation = "https://devin-source.rte-france.com/antares/antares-performance-tests#readme"
+Issues = "https://devin-source.rte-france.com/antares/antares-performance-tests/issues"
+Source = "https://devin-source.rte-france.com/antares/antares-performance-tests"
+
+[project.scripts]
+antares-performance-tests = "antares_performance_tests.cli:antares_performance_tests"
+
+[tool.hatch.version]
+path = "src/antares_performance_tests/__about__.py"
+
+[tool.hatch.envs.default]
+dependencies = [
+    "coverage[toml]>=6.5",
+    "pytest",
+]
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "coverage run -m pytest {args:tests}"
+cov-report = [
+    "- coverage combine",
+    "coverage report",
+]
+cov = [
+    "test-cov",
+    "cov-report",
+]
+
+[[tool.hatch.envs.all.matrix]]
+python = ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+[tool.hatch.envs.types]
+dependencies = [
+    "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/antares_performance_tests tests}"
+
+[tool.coverage.run]
+source_pkgs = ["antares_performance_tests", "tests"]
+branch = true
+parallel = true
+omit = [
+    "src/antares_performance_tests/__about__.py",
+]
+
+[tool.coverage.paths]
+antares_performance_tests = ["src/antares_performance_tests", "*/antares-performance-tests/src/antares_performance_tests"]
+tests = ["tests", "*/antares-performance-tests/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "no cov",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
