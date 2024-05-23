@@ -1,6 +1,6 @@
 """
 The goal of this benchmark is to measure the saving times of a DataFrame,
-using different backup methods (CSV, HDF5, Excel).
+using different backup methods (CSV, Arrow, HDF5, Excel).
 
 Measurements will be made on annual time series with the usual time steps:
 - 1 year (freq='Y')
@@ -15,7 +15,7 @@ For the CSV format, we'll choose different separators (comma, semicolon, tab).
 Saving performance for the Excel format varies according to the engine used for serialization (openpyxl, xlsxwriter).
 
 To compare performance, we'll select the results for matrices (8760, 1000) and
-the following formats: CSV (semicolon), HDF5, Excel (openpyxl, xlsxwriter).
+the following formats: CSV (semicolon), Arrow, HDF5, Excel (openpyxl, xlsxwriter).
 """
 
 import argparse
@@ -33,12 +33,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-try:
-    import openpyxl  # noqa
-    import tables  # noqa
-    import xlsxwriter  # noqa
-except ImportError:
-    raise ImportError("The 'openpyxl', 'xlsxwriter' and 'tables' packages are required for this benchmark") from None
+_REQUIRED_PACKAGES = {
+    "openpyxl": "Benchmarks with XLSX format",
+    "xlsxwriter": "Benchmarks with XLSX format",
+    "tables": "Benchmarks with Arrow (or HDF5) format",
+    "pyarrow": "Benchmarks with Arrow format",
+    "tabulate": "Generate the benchmark report",
+}
+
+for package in _REQUIRED_PACKAGES:
+    try:
+        __import__(package)
+    except ImportError:
+        raise ImportError(f"The '{package}' package is required for this benchmark") from None
 
 logger = logging.getLogger("dataframe_saving_benchmark")
 
@@ -80,6 +87,7 @@ class TableExportFormat(EnumIgnoreCase):
 
     XLSX = "xlsx (openpyxl)"
     XLSX_WRITER = "xlsx (xlsxwriter)"
+    ARROW = "arrow"
     HDF5 = "hdf5"
     TSV = "tsv"
     CSV = "csv (comma)"
@@ -99,6 +107,8 @@ class TableExportFormat(EnumIgnoreCase):
             return "text/tab-separated-values"
         elif self in (TableExportFormat.CSV, TableExportFormat.CSV_SEMICOLON):
             return "text/csv"
+        elif self == TableExportFormat.ARROW:
+            return "application/vnd.apache.arrow.file"
         elif self == TableExportFormat.HDF5:
             return "application/x-hdf5"
         else:  # pragma: no cover
@@ -113,6 +123,8 @@ class TableExportFormat(EnumIgnoreCase):
             return ".tsv"
         elif self in (TableExportFormat.CSV, TableExportFormat.CSV_SEMICOLON):
             return ".csv"
+        elif self == TableExportFormat.ARROW:
+            return ".arrow"
         elif self == TableExportFormat.HDF5:
             return ".h5"
         else:  # pragma: no cover
@@ -166,6 +178,11 @@ class TableExportFormat(EnumIgnoreCase):
                 header=with_header,
                 float_format="%.6f",
             )
+        elif self == TableExportFormat.ARROW:
+            # Feather does not directly support serializing a DatetimeIndex as an index.
+            # We need to convert it to a column before saving the DataFrame.
+            df_reset = df.reset_index()
+            return df_reset.to_feather(export_path, compression="uncompressed")
         elif self == TableExportFormat.HDF5:
             return df.to_hdf(
                 export_path,
@@ -215,7 +232,10 @@ def measure_df_saving_time(
                 delete=True,
             ) as tf:
                 export_path = Path(tf.name)
-                logger.info(f"- Exporting DataFrame with {col} columns and frequency {freq}{freq_str}...")
+                logger.info(
+                    f"- Exporting table with {col:-4d} columns and frequency {freq:-5d}{freq_str}"
+                    f" to {export_format} format..."
+                )
                 start_time = time.time()
                 export_format.export_table(df, export_path)
                 duration = time.time() - start_time
@@ -314,20 +334,27 @@ datefmt =
 """
 
 
-def calc_all_saving_times(saving_time_table_path: Path, config: Config) -> None:
+def build_saving_time_table_path(base_path: Path, export_format: TableExportFormat) -> Path:
+    saving_time_table_name = f"{base_path.stem}-{export_format.name}{base_path.suffix}"
+    return base_path.parent.joinpath(saving_time_table_name)
+
+
+def calc_all_saving_times(base_path: Path, config: Config) -> None:
     columns = config.benchmark.columns
     frequencies = config.benchmark.frequencies
 
     export_format: TableExportFormat
     count = len(TableExportFormat)
     for step, export_format in enumerate(TableExportFormat, start=1):
-        logger.info(f"Processing benchmark for {export_format} format [{step}/{count}]...")
+        saving_time_table_path = build_saving_time_table_path(base_path, export_format)
 
         if saving_time_table_path.exists():
             # load the HDF5 table which key is the name of the export format
             try:
-                saving_time_table = t.cast(pd.DataFrame, pd.read_hdf(saving_time_table_path, key=export_format.name))
-            except KeyError:
+                saving_time_table = t.cast(pd.DataFrame, pd.read_feather(saving_time_table_path))
+                saving_time_table.set_index("index", inplace=True)
+                saving_time_table.columns = [int(c) for c in saving_time_table.columns]
+            except FileNotFoundError:
                 pass
             else:
                 # fmt: off
@@ -335,23 +362,24 @@ def calc_all_saving_times(saving_time_table_path: Path, config: Config) -> None:
                     saving_time_table.columns.equals(pd.Index(columns)) and
                     saving_time_table.index.equals(pd.Index(frequencies.values()))
                 ):
-                    logger.info(f"Skipping the benchmark for {export_format} format (already done)")
+                    logger.info(f"Skipping the benchmark for {export_format:18s}: already done [{step}/{count}]")
                     continue
 
+        logger.info(f"Processing benchmark for {export_format:18s} [{step}/{count}]...")
         saving_time_table = measure_df_saving_time(
-            saving_time_table_path.parent,
+            base_path.parent,
             export_format,
             columns=columns,
             frequencies=frequencies.items(),
             seed=config.benchmark.seed,
         )
 
-        saving_time_table.to_hdf(saving_time_table_path, key=export_format.name, mode="a")
+        saving_time_table.columns = [str(c) for c in saving_time_table.columns]
+        saving_time_table.reset_index(inplace=True)
+        saving_time_table.to_feather(saving_time_table_path)
 
 
-def calc_fastest_exports(
-    saving_time_table_path: Path, columns: t.Sequence[int], frequencies: t.Mapping[int, str]
-) -> pd.DataFrame:
+def calc_fastest_exports(base_path: Path, columns: t.Sequence[int], frequencies: t.Mapping[int, str]) -> pd.DataFrame:
     # For the report, we compare the saving times of each format for the largest dimensions
     column = max(columns)
     freq = max(frequencies)
@@ -361,7 +389,10 @@ def calc_fastest_exports(
     fastest_exports = pd.DataFrame(columns=[col_time, col_ratio], index=[str(f) for f in TableExportFormat])
     export_format: TableExportFormat
     for export_format in TableExportFormat:
-        saving_time_table = t.cast(pd.DataFrame, pd.read_hdf(saving_time_table_path, key=export_format.name))
+        saving_time_table_path = build_saving_time_table_path(base_path, export_format)
+        saving_time_table = t.cast(pd.DataFrame, pd.read_feather(saving_time_table_path))
+        saving_time_table.set_index("index", inplace=True)
+        saving_time_table.columns = [int(c) for c in saving_time_table.columns]
         fastest_exports.loc[str(export_format), col_time] = saving_time_table.loc[freq_str, column].round(1)
     fastest_exports[col_ratio] = fastest_exports[col_time] / fastest_exports[col_time].min()
     fastest_exports.sort_values(col_time, inplace=True)
@@ -369,6 +400,8 @@ def calc_fastest_exports(
 
 
 def benchmark(config_dir: Path, *, clear_cache: bool = False) -> None:
+    config_dir.mkdir(parents=True, exist_ok=True)
+
     logging_ini_path = config_dir / "logging.ini"
     if not logging_ini_path.exists():
         logging_ini_path.write_text(LOGGING_INI)
@@ -384,12 +417,14 @@ def benchmark(config_dir: Path, *, clear_cache: bool = False) -> None:
     columns = config.benchmark.columns
     frequencies = config.benchmark.frequencies
 
-    # Use a single HDF5 file to store the results of the benchmark
-    saving_time_table_path = config_dir / "saving_time_table.h5"
+    # Several Arrow files to store the results of the benchmark
     if clear_cache:
-        saving_time_table_path.unlink(missing_ok=True)
-    calc_all_saving_times(saving_time_table_path, config)
-    fastest_exports = calc_fastest_exports(saving_time_table_path, columns, frequencies)
+        for path in config_dir.glob("saving_time_table*.arrow"):
+            path.unlink()
+
+    saving_time_table_base_path = config_dir / "saving_time_table.arrow"
+    calc_all_saving_times(saving_time_table_base_path, config)
+    fastest_exports = calc_fastest_exports(saving_time_table_base_path, columns, frequencies)
 
     # Generate the report (compare the results of the different formats)
     logger.info(f"Generating the benchmark report '{config.report.report_file}'...")
@@ -403,7 +438,8 @@ def benchmark(config_dir: Path, *, clear_cache: bool = False) -> None:
         export_format: TableExportFormat
         for export_format in TableExportFormat:
             fh.write(f"### {export_format}\n\n")
-            saving_time_table = t.cast(pd.DataFrame, pd.read_hdf(saving_time_table_path, key=export_format.name))
+            saving_time_table_path = build_saving_time_table_path(saving_time_table_base_path, export_format)
+            saving_time_table = t.cast(pd.DataFrame, pd.read_feather(saving_time_table_path))
             fh.write(saving_time_table.to_markdown())
             fh.write("\n\n")
         fh.write("# Fastest exports\n\n")
@@ -443,4 +479,5 @@ def main(argv: t.Union[t.Sequence[str], None]) -> None:
 
 
 if __name__ == "__main__":
+    # e.g.: python src/antares_performance_tests/dataframe_saving_benchmark.py reports/dataframe_saving_benchmark
     main(sys.argv[1:])
