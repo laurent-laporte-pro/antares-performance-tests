@@ -26,7 +26,7 @@ import logging
 import logging.config
 import sys
 import tempfile
-import time
+import timeit
 import typing as t
 from pathlib import Path
 
@@ -236,9 +236,9 @@ def measure_df_saving_time(
                     f"- Exporting table with {col:-4d} columns and frequency {freq:-5d}{freq_str}"
                     f" to {export_format} format..."
                 )
-                start_time = time.time()
+                start_time = timeit.default_timer()
                 export_format.export_table(df, export_path)
-                duration = time.time() - start_time
+                duration = timeit.default_timer() - start_time
                 saving_time_table.loc[freq_str, col] = duration
 
     return saving_time_table
@@ -393,7 +393,7 @@ def calc_fastest_exports(base_path: Path, columns: t.Sequence[int], frequencies:
         saving_time_table = t.cast(pd.DataFrame, pd.read_hdf(saving_time_table_path, key="data"))
         saving_time_table.set_index("index", inplace=True)
         saving_time_table.columns = [int(c) for c in saving_time_table.columns]
-        fastest_exports.loc[str(export_format), col_time] = saving_time_table.loc[freq_str, column].round(1)
+        fastest_exports.loc[str(export_format), col_time] = saving_time_table.loc[freq_str, column].round(4)
     fastest_exports[col_ratio] = fastest_exports[col_time] / fastest_exports[col_time].min()
     fastest_exports.sort_values(col_time, inplace=True)
     return fastest_exports
