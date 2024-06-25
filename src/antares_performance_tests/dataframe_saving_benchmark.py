@@ -188,7 +188,7 @@ class TableExportFormat(EnumIgnoreCase):
                 export_path,
                 key="data",
                 mode="w",
-                format="table",
+                format="fixed",  # "fixed" is faster than "table" for writing
                 data_columns=True,
             )
         else:  # pragma: no cover
