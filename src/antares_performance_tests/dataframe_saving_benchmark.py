@@ -351,7 +351,7 @@ def calc_all_saving_times(base_path: Path, config: Config) -> None:
         if saving_time_table_path.exists():
             # load the HDF5 table which key is the name of the export format
             try:
-                saving_time_table = t.cast(pd.DataFrame, pd.read_feather(saving_time_table_path))
+                saving_time_table = t.cast(pd.DataFrame, pd.read_hdf(saving_time_table_path, key="data"))
                 saving_time_table.set_index("index", inplace=True)
                 saving_time_table.columns = [int(c) for c in saving_time_table.columns]
             except FileNotFoundError:
@@ -376,7 +376,7 @@ def calc_all_saving_times(base_path: Path, config: Config) -> None:
 
         saving_time_table.columns = [str(c) for c in saving_time_table.columns]
         saving_time_table.reset_index(inplace=True)
-        saving_time_table.to_feather(saving_time_table_path)
+        saving_time_table.to_hdf(saving_time_table_path, key="data", mode="w", format="fixed", data_columns=True)
 
 
 def calc_fastest_exports(base_path: Path, columns: t.Sequence[int], frequencies: t.Mapping[int, str]) -> pd.DataFrame:
@@ -390,7 +390,7 @@ def calc_fastest_exports(base_path: Path, columns: t.Sequence[int], frequencies:
     export_format: TableExportFormat
     for export_format in TableExportFormat:
         saving_time_table_path = build_saving_time_table_path(base_path, export_format)
-        saving_time_table = t.cast(pd.DataFrame, pd.read_feather(saving_time_table_path))
+        saving_time_table = t.cast(pd.DataFrame, pd.read_hdf(saving_time_table_path, key="data"))
         saving_time_table.set_index("index", inplace=True)
         saving_time_table.columns = [int(c) for c in saving_time_table.columns]
         fastest_exports.loc[str(export_format), col_time] = saving_time_table.loc[freq_str, column].round(1)
@@ -419,10 +419,10 @@ def benchmark(config_dir: Path, *, clear_cache: bool = False) -> None:
 
     # Several Arrow files to store the results of the benchmark
     if clear_cache:
-        for path in config_dir.glob("saving_time_table*.arrow"):
+        for path in config_dir.glob("saving_time_table*.hdf5"):
             path.unlink()
 
-    saving_time_table_base_path = config_dir / "saving_time_table.arrow"
+    saving_time_table_base_path = config_dir / "saving_time_table.hdf5"
     calc_all_saving_times(saving_time_table_base_path, config)
     fastest_exports = calc_fastest_exports(saving_time_table_base_path, columns, frequencies)
 
@@ -439,7 +439,7 @@ def benchmark(config_dir: Path, *, clear_cache: bool = False) -> None:
         for export_format in TableExportFormat:
             fh.write(f"### {export_format}\n\n")
             saving_time_table_path = build_saving_time_table_path(saving_time_table_base_path, export_format)
-            saving_time_table = t.cast(pd.DataFrame, pd.read_feather(saving_time_table_path))
+            saving_time_table = t.cast(pd.DataFrame, pd.read_hdf(saving_time_table_path, key="data"))
             fh.write(saving_time_table.to_markdown())
             fh.write("\n\n")
         fh.write("# Fastest exports\n\n")
